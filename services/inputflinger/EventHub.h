@@ -66,6 +66,19 @@ enum {
     BUILT_IN_KEYBOARD_ID = 0,
 };
 
+// Added for ESM
+/**
+ * struct input_value - input value representation
+ * @type: type of value (EV_KEY, EV_ABS, etc)
+ * @code: the value code
+ * @value: the value
+ */
+struct input_value {
+        uint16_t type;
+        uint16_t code;
+        int32_t value;
+};
+
 /*
  * A raw event as retrieved from the EventHub.
  */
@@ -172,6 +185,9 @@ protected:
     virtual ~EventHubInterface() { }
 
 public:
+    // Added for ESM
+    int mESMpid = -1;
+
     // Synthetic raw event type codes produced when devices are added or removed.
     enum {
         // Sent when a device is added.
@@ -460,6 +476,10 @@ private:
     size_t mPendingEventCount;
     size_t mPendingEventIndex;
     bool mPendingINotify;
+
+    //Added for ESM
+    struct epoll_event_bare meventBuffer[EPOLL_MAX_EVENTS];
+    int meventBufferIndex = 0;
 
     bool mUsingEpollWakeup;
 };

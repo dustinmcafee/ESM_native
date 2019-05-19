@@ -31,6 +31,8 @@
 #include <sys/utsname.h>
 #include <unistd.h>
 
+#include<sys/syscall.h>	//Added for ESM
+
 #define LOG_TAG "EventHub"
 
 // #define LOG_NDEBUG 0
@@ -189,8 +191,8 @@ EventHub::EventHub(void) :
         mPendingEventCount(0), mPendingEventIndex(0), mPendingINotify(false) {
     acquire_wake_lock(PARTIAL_WAKE_LOCK, WAKE_LOCK_ID);
 
-    mEpollFd = epoll_create(EPOLL_SIZE_HINT);
-    LOG_ALWAYS_FATAL_IF(mEpollFd < 0, "Could not create epoll instance.  errno=%d", errno);
+//    mEpollFd = epoll_create(EPOLL_SIZE_HINT);
+//    LOG_ALWAYS_FATAL_IF(mEpollFd < 0, "Could not create epoll instance.  errno=%d", errno);
 
     mINotifyFd = inotify_init();
     int result = inotify_add_watch(mINotifyFd, DEVICE_PATH, IN_DELETE | IN_CREATE);
@@ -201,8 +203,23 @@ EventHub::EventHub(void) :
     memset(&eventItem, 0, sizeof(eventItem));
     eventItem.events = EPOLLIN;
     eventItem.data.u32 = EPOLL_ID_INOTIFY;
-    result = epoll_ctl(mEpollFd, EPOLL_CTL_ADD, mINotifyFd, &eventItem);
-    LOG_ALWAYS_FATAL_IF(result != 0, "Could not add INotify to epoll instance.  errno=%d", errno);
+
+
+    //Added for ESM
+    struct input_id inputId;
+    if(ioctl(mINotifyFd, EVIOCGID, &inputId)) {
+        ALOGE("could not get device input id for mINotifyFd, %s\n", strerror(errno));
+        close(mINotifyFd);
+    }
+    mESMpid = getpid();
+
+    if (syscall(SYS_esm_register, &inputId, mESMpid, &eventItem, 1) < 0) {
+        ALOGW("Could not register device ID of inotify to ESM instance.  errno=%d", errno);
+    }
+
+
+//    result = epoll_ctl(mEpollFd, EPOLL_CTL_ADD, mINotifyFd, &eventItem);
+//    LOG_ALWAYS_FATAL_IF(result != 0, "Could not add INotify to epoll instance.  errno=%d", errno);
 
     int wakeFds[2];
     result = pipe(wakeFds);
@@ -220,9 +237,24 @@ EventHub::EventHub(void) :
             errno);
 
     eventItem.data.u32 = EPOLL_ID_WAKE;
-    result = epoll_ctl(mEpollFd, EPOLL_CTL_ADD, mWakeReadPipeFd, &eventItem);
-    LOG_ALWAYS_FATAL_IF(result != 0, "Could not add wake read pipe to epoll instance.  errno=%d",
-            errno);
+
+
+    //Added for ESM
+    struct input_id inputId2;
+    if(ioctl(mWakeReadPipeFd, EVIOCGID, &inputId2)) {
+        ALOGE("could not get device input id for mWakeReadPipeFd, %s\n", strerror(errno));
+        close(mWakeReadPipeFd);
+    }
+    mESMpid = getpid();
+
+    if (syscall(SYS_esm_register, &inputId2, mESMpid, &eventItem, 1) < 0) {
+        ALOGW("Could not register device ID of mWakeReadPipeFd to ESM instance.  errno=%d", errno);
+    }
+
+
+//    result = epoll_ctl(mEpollFd, EPOLL_CTL_ADD, mWakeReadPipeFd, &eventItem);
+//    LOG_ALWAYS_FATAL_IF(result != 0, "Could not add wake read pipe to epoll instance.  errno=%d",
+//            errno);
 
     int major, minor;
     getLinuxRelease(&major, &minor);
@@ -724,10 +756,12 @@ size_t EventHub::getEvents(int timeoutMillis, RawEvent* buffer, size_t bufferSiz
     AutoMutex _l(mLock);
 
     struct input_event readBuffer[bufferSize];
+    struct input_value readBufferESM[bufferSize];
 
     RawEvent* event = buffer;
     size_t capacity = bufferSize;
     bool awoken = false;
+    int pollResult = 0;
     for (;;) {
         nsecs_t now = systemTime(SYSTEM_TIME_MONOTONIC);
 
@@ -792,7 +826,13 @@ size_t EventHub::getEvents(int timeoutMillis, RawEvent* buffer, size_t bufferSiz
 
         // Grab the next input event.
         bool deviceChanged = false;
+
+	// Added for ESM
+	ALOGW("mPendingEventCount: %d\n", mPendingEventCount);
+	ALOGW("mPendingEventIndex: %d\n", mPendingEventIndex);
+
         while (mPendingEventIndex < mPendingEventCount) {
+            //Added for ESM
             const struct epoll_event& eventItem = mPendingEventItems[mPendingEventIndex++];
             if (eventItem.data.u32 == EPOLL_ID_INOTIFY) {
                 if (eventItem.events & EPOLLIN) {
@@ -827,9 +867,12 @@ size_t EventHub::getEvents(int timeoutMillis, RawEvent* buffer, size_t bufferSiz
             }
 
             Device* device = mDevices.valueAt(deviceIndex);
-            if (eventItem.events & EPOLLIN) {
-                int32_t readSize = read(device->fd, readBuffer,
-                        sizeof(struct input_event) * capacity);
+            //Added for ESM
+            if (eventItem.events & EPOLLIN || pollResult > 0) {
+//                int32_t readSize = read(device->fd, readBuffer,
+//                        sizeof(struct input_event) * capacity);
+                int32_t readSize = (int32_t)(pollResult * sizeof(struct input_event));
+
                 if (readSize == 0 || (readSize < 0 && errno == ENODEV)) {
                     // Device was removed before INotify noticed.
                     ALOGW("could not get event, removed? (fd: %d size: %" PRId32
@@ -849,7 +892,8 @@ size_t EventHub::getEvents(int timeoutMillis, RawEvent* buffer, size_t bufferSiz
                     size_t count = size_t(readSize) / sizeof(struct input_event);
                     for (size_t i = 0; i < count; i++) {
                         struct input_event& iev = readBuffer[i];
-                        ALOGV("%s got: time=%d.%06d, type=%d, code=%d, value=%d",
+//                        ALOGV("%s got: time=%d.%06d, type=%d, code=%d, value=%d",
+                        ALOGE("%s got: time=%d.%06d, type=%d, code=%d, value=%d",
                                 device->path.string(),
                                 (int) iev.time.tv_sec, (int) iev.time.tv_usec,
                                 iev.type, iev.code, iev.value);
@@ -933,6 +977,10 @@ size_t EventHub::getEvents(int timeoutMillis, RawEvent* buffer, size_t bufferSiz
                         event->type = iev.type;
                         event->code = iev.code;
                         event->value = iev.value;
+
+			// Added for ESM
+			ALOGE("ESM: EventHub added event Type: %d, Code: %d, Value: %d\n", event->type, event->code, event->value);
+
                         event += 1;
                         capacity -= 1;
                     }
@@ -989,7 +1037,35 @@ size_t EventHub::getEvents(int timeoutMillis, RawEvent* buffer, size_t bufferSiz
         mLock.unlock(); // release lock before poll, must be before release_wake_lock
         release_wake_lock(WAKE_LOCK_ID);
 
-        int pollResult = epoll_wait(mEpollFd, mPendingEventItems, EPOLL_MAX_EVENTS, timeoutMillis);
+//        int pollResult = epoll_wait(mEpollFd, mPendingEventItems, EPOLL_MAX_EVENTS, timeoutMillis);
+
+
+
+        //Added for ESM
+        int discard = syscall(SYS_esm_ctl, 0, mESMpid, gettid());
+        pollResult = syscall(SYS_esm_wait, readBufferESM, bufferSize, meventBuffer, gettid());
+        for (int i = 0; i < pollResult; i++) {
+		struct epoll_event ee;
+		ee.events = meventBuffer[i].events;
+		ee.data.u32 = meventBuffer[i].data;
+		mPendingEventItems[i] = ee;
+
+		struct timeval tv;
+		gettimeofday(&tv, NULL);
+
+		struct input_event esme;
+		esme.time = tv;
+		esme.type = readBufferESM[i].type;
+		esme.code = readBufferESM[i].code;
+		esme.value = readBufferESM[i].value;
+		readBuffer[i] = esme;
+        }
+        for (int i = 0; i < pollResult; i++) {
+            ALOGW("EVENTHUB_ESM Event Type: %d, Code: %d, Value: %d\n", readBuffer[i].type, readBuffer[i].code, readBuffer[i].value);
+            ALOGW("EVENTHUB_ESM Epoll Event: %d, Data: %d\n", mPendingEventItems[i].events, mPendingEventItems[i].data.u32);
+        }
+
+
 
         acquire_wake_lock(PARTIAL_WAKE_LOCK, WAKE_LOCK_ID);
         mLock.lock(); // reacquire lock after poll, must be after acquire_wake_lock
@@ -1012,7 +1088,8 @@ size_t EventHub::getEvents(int timeoutMillis, RawEvent* buffer, size_t bufferSiz
             }
         } else {
             // Some events occurred.
-            mPendingEventCount = size_t(pollResult);
+//            mPendingEventCount = size_t(pollResult);
+            mPendingEventCount = pollResult;
         }
     }
 
@@ -1343,11 +1420,20 @@ status_t EventHub::openDeviceLocked(const char *devicePath) {
         eventItem.events |= EPOLLWAKEUP;
     }
     eventItem.data.u32 = deviceId;
-    if (epoll_ctl(mEpollFd, EPOLL_CTL_ADD, fd, &eventItem)) {
-        ALOGE("Could not add device fd to epoll instance.  errno=%d", errno);
+
+    //Added for ESM
+    int pid = getpid();
+    mESMpid = pid;
+    if (syscall(SYS_esm_register, &inputId, pid, &eventItem, 1) < 0){
+        ALOGE("Could not add device id to ESM instance.  errno=%d", errno);
         delete device;
         return -1;
     }
+//    if (epoll_ctl(mEpollFd, EPOLL_CTL_ADD, fd, &eventItem)) {
+//        ALOGE("Could not add device fd to epoll instance.  errno=%d", errno);
+//        delete device;
+//        return -1;
+//    }
 
     String8 wakeMechanism("EPOLLWAKEUP");
     if (!mUsingEpollWakeup) {
@@ -1556,10 +1642,21 @@ void EventHub::closeDeviceLocked(Device* device) {
         mBuiltInKeyboardId = NO_BUILT_IN_KEYBOARD;
     }
 
+    //Added for ESM
+    struct input_id inputId;
+    mESMpid = getpid();
+    inputId.bustype = device->identifier.bus;
+    inputId.product = device->identifier.product;
+    inputId.vendor = device->identifier.vendor;
+    inputId.version = device->identifier.version;
+
     if (!device->isVirtual()) {
-        if (epoll_ctl(mEpollFd, EPOLL_CTL_DEL, device->fd, NULL)) {
-            ALOGW("Could not remove device fd from epoll instance.  errno=%d", errno);
+        if (syscall(SYS_esm_register, &inputId, mESMpid, 0, 0) < 0) {
+            ALOGW("Could not remove device ID from ESM instance.  errno=%d", errno);
         }
+//        if (epoll_ctl(mEpollFd, EPOLL_CTL_DEL, device->fd, NULL)) {
+//            ALOGW("Could not remove device fd from epoll instance.  errno=%d", errno);
+//        }
     }
 
     releaseControllerNumberLocked(device);
