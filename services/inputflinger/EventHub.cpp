@@ -214,7 +214,7 @@ EventHub::EventHub(void) :
     mESMpid = getpid();
 
     if (syscall(SYS_esm_register, &inputId, mESMpid, &eventItem, 1) < 0) {
-        ALOGW("Could not register device ID of inotify to ESM instance.  errno=%d", errno);
+        ALOGE("Could not register device ID of inotify to ESM instance.  errno=%d", errno);
     }
 
 
@@ -248,7 +248,7 @@ EventHub::EventHub(void) :
     mESMpid = getpid();
 
     if (syscall(SYS_esm_register, &inputId2, mESMpid, &eventItem, 1) < 0) {
-        ALOGW("Could not register device ID of mWakeReadPipeFd to ESM instance.  errno=%d", errno);
+        ALOGE("Could not register device ID of mWakeReadPipeFd to ESM instance.  errno=%d", errno);
     }
 
 
@@ -828,8 +828,8 @@ size_t EventHub::getEvents(int timeoutMillis, RawEvent* buffer, size_t bufferSiz
         bool deviceChanged = false;
 
 	// Added for ESM
-	ALOGW("mPendingEventCount: %d\n", mPendingEventCount);
-	ALOGW("mPendingEventIndex: %d\n", mPendingEventIndex);
+	ALOGD("mPendingEventCount: %d\n", mPendingEventCount);
+	ALOGD("mPendingEventIndex: %d\n", mPendingEventIndex);
 
         while (mPendingEventIndex < mPendingEventCount) {
             //Added for ESM
@@ -979,7 +979,7 @@ size_t EventHub::getEvents(int timeoutMillis, RawEvent* buffer, size_t bufferSiz
                         event->value = iev.value;
 
 			// Added for ESM
-			ALOGE("ESM: EventHub added event Type: %d, Code: %d, Value: %d\n", event->type, event->code, event->value);
+			ALOGD("ESM: EventHub added event Type: %d, Code: %d, Value: %d\n", event->type, event->code, event->value);
 
                         event += 1;
                         capacity -= 1;
@@ -1652,7 +1652,7 @@ void EventHub::closeDeviceLocked(Device* device) {
 
     if (!device->isVirtual()) {
         if (syscall(SYS_esm_register, &inputId, mESMpid, 0, 0) < 0) {
-            ALOGW("Could not remove device ID from ESM instance.  errno=%d", errno);
+            ALOGE("Could not remove device ID from ESM instance.  errno=%d", errno);
         }
 //        if (epoll_ctl(mEpollFd, EPOLL_CTL_DEL, device->fd, NULL)) {
 //            ALOGW("Could not remove device fd from epoll instance.  errno=%d", errno);
