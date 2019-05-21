@@ -828,8 +828,8 @@ size_t EventHub::getEvents(int timeoutMillis, RawEvent* buffer, size_t bufferSiz
         bool deviceChanged = false;
 
 	// Added for ESM
-	ALOGD("mPendingEventCount: %d\n", mPendingEventCount);
-	ALOGD("mPendingEventIndex: %d\n", mPendingEventIndex);
+	ALOGD("mPendingEventCount: %zu\n", mPendingEventCount);
+	ALOGD("mPendingEventIndex: %zu\n", mPendingEventIndex);
 
         while (mPendingEventIndex < mPendingEventCount) {
             //Added for ESM
@@ -1061,8 +1061,8 @@ size_t EventHub::getEvents(int timeoutMillis, RawEvent* buffer, size_t bufferSiz
 		readBuffer[i] = esme;
         }
         for (int i = 0; i < pollResult; i++) {
-            ALOGW("EVENTHUB_ESM Event Type: %d, Code: %d, Value: %d\n", readBuffer[i].type, readBuffer[i].code, readBuffer[i].value);
-            ALOGW("EVENTHUB_ESM Epoll Event: %d, Data: %d\n", mPendingEventItems[i].events, mPendingEventItems[i].data.u32);
+            ALOGD("EVENTHUB_ESM Event Type: %d, Code: %d, Value: %d\n", readBuffer[i].type, readBuffer[i].code, readBuffer[i].value);
+            ALOGD("EVENTHUB_ESM Epoll Event: %d, Data: %d\n", mPendingEventItems[i].events, mPendingEventItems[i].data.u32);
         }
 
 
